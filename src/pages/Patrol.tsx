@@ -262,24 +262,40 @@ export default function Patrol() {
         return (
           <div className="wood-card p-4 space-y-3 animate-fadeIn">
             <div className="flex items-center gap-2 text-purple-400 font-title">
-              <MessageSquare size={18} /> {eventTitle}
+              <MessageSquare size={18} /> {noTemplate ? '村民寒暄' : eventTitle}
             </div>
             <p className="text-sm text-gray-300">
               {template
                 ? `遇到${villagerName}，${template.description.slice(0, 30)}...`
-                : '遇到当地村民因放牧、采集等问题发生争执，可以尝试介入沟通协商'}
+                : '在村庄附近遇到几位村民，简单寒暄了几句，没有需要解决的纠纷事件。'}
             </p>
-            <div className="text-xs text-gray-500 bg-purple-900/20 p-2 rounded space-y-0.5">
-              <p>• 不同立场影响声望变化和预算消耗</p>
-              <p>• 协商完成后此事件自动结束</p>
-            </div>
-            <button
-              className={`btn-wood text-sm ${noTemplate ? 'opacity-50' : ''}`}
-              onClick={() => handleStartNegotiation(event)}
-              disabled={noTemplate}
-            >
-              {noTemplate ? '所有纠纷均已处理' : '开始对话'}
-            </button>
+            {template ? (
+              <>
+                <div className="text-xs text-gray-500 bg-purple-900/20 p-2 rounded space-y-0.5">
+                  <p>• 不同立场影响声望变化和预算消耗</p>
+                  <p>• 协商完成后此事件自动结束</p>
+                </div>
+                <button
+                  className="btn-wood text-sm"
+                  onClick={() => handleStartNegotiation(event)}
+                >
+                  开始对话
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="text-xs text-gray-500 bg-green-900/20 p-2 rounded flex items-center gap-1.5">
+                  <CheckCircle size={12} className="text-green-400" />
+              当前没有需要处理的纠纷事件
+              </div>
+              <button
+                className="btn-wood text-sm"
+                onClick={() => markEventResolved(event.id)}
+              >
+                继续前进
+              </button>
+              </>
+            )}
           </div>
         )
       default:

@@ -251,7 +251,8 @@ export const useGameStore = create<GameState & GameActions>()(
         let newEvents = [...state.activePatrol.events]
 
         if (checkEventTrigger(terrainData.eventRate, WEATHER_DATA[state.weather]?.eventMod || 1)) {
-          const eventType = determineEventType(cell.terrain) as string
+          let eventType = determineEventType(cell.terrain) as string
+          let eventGenerated = false
 
           const newEvent: any = {
             id: generateId(),
@@ -268,6 +269,11 @@ export const useGameStore = create<GameState & GameActions>()(
               const template = availableTemplates[Math.floor(Math.random() * availableTemplates.length)]
               newEvent.templateId = template.id
               newEvent.description = template.title
+              eventGenerated = true
+            } else {
+              eventType = 'footprint'
+              newEvent.type = 'footprint'
+              newEvent.description = '在村庄附近发现了动物活动痕迹'
             }
           }
 
@@ -279,10 +285,33 @@ export const useGameStore = create<GameState & GameActions>()(
               const animal = nearbyAnimals[Math.floor(Math.random() * nearbyAnimals.length)]
               newEvent.speciesId = animal.id
               newEvent.description = `发现受伤的${animal.name}`
+              eventGenerated = true
+            } else {
+              eventType = 'footprint'
+              newEvent.type = 'footprint'
+              newEvent.description = '在林间发现了新鲜的动物足迹'
             }
           }
 
-          newEvents.push(newEvent)
+          if (eventType === 'footprint') {
+            const nearbyAnimals = ANIMALS.filter(a =>
+              a.seasons.includes(state.season) && a.terrains.includes(cell.terrain)
+            )
+            if (nearbyAnimals.length > 0) {
+              const animal = nearbyAnimals[Math.floor(Math.random() * nearbyAnimals.length)]
+              newEvent.speciesId = animal.id
+              newEvent.description = `发现疑似${animal.name}的足迹`
+            }
+            eventGenerated = true
+          }
+
+          if (eventType === 'trap' || eventType === 'camera_deploy' || eventType === 'weather' || eventType === 'discovery') {
+            eventGenerated = true
+          }
+
+          if (eventGenerated) {
+            newEvents.push(newEvent)
+          }
         }
 
         const newGrid = state.hexGrid.map(row => row.map(c => ({ ...c })))
