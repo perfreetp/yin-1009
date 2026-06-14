@@ -44,6 +44,7 @@ const initialState: GameState = {
   achievements: ACHIEVEMENTS.map(a => ({ ...a })),
   stats: { ...defaultStats },
   activePatrol: null,
+  pendingEventId: null,
   ending: null,
   gamePhase: 'menu',
 }
@@ -62,14 +63,14 @@ interface GameActions {
   retrieveCamera: (cameraId: string) => void
   identifyFootprint: (speciesId: string) => boolean
   collectSample: (speciesId: string, type: 'footprint' | 'feces' | 'hair') => void
-  startRescue: (speciesId: string, injuryLevel: string) => void
+  startRescue: (speciesId: string, injuryLevel: string) => string
   treatRescue: (rescueId: string, treatment: string) => boolean
   releaseAnimal: (rescueId: string, location: { q: number; r: number }) => void
-  discoverTrap: (hexPos: { q: number; r: number }) => void
+  discoverTrap: (hexPos: { q: number; r: number }) => string
   disarmTrap: (trapId: string) => boolean
   assembleClues: (clueIds: string[]) => void
   startNegotiation: (eventId: string) => void
-  resolveNegotiation: (eventId: string, stance: string) => void
+  resolveNegotiation: (eventId: string, stance: string) => { repChange: number; budgetCost: number } | null
   completeMission: (missionId: string) => void
   processSeasonEnd: () => void
   processYearEnd: () => void
@@ -79,6 +80,8 @@ interface GameActions {
   revealHexes: (center: { q: number; r: number }, range: number) => void
   checkAchievements: () => void
   updateWeather: () => void
+  markEventResolved: (eventId: string) => void
+  setPendingEvent: (eventId: string | null) => void
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -330,15 +333,19 @@ export const useGameStore = create<GameState & GameActions>()(
         const camera = state.cameras.find(c => c.id === cameraId)
         if (!camera) return
 
-        const daysDeployed = state.day - camera.deployDay
+        const daysDeployed = Math.max(1, state.day - camera.deployDay)
         const newPhotos: CameraPhoto[] = []
+        const cameraCell = state.hexGrid[camera.hexPos.r]?.[camera.hexPos.q]
         const nearbyAnimals = ANIMALS.filter(a =>
           a.seasons.includes(state.season) &&
-          a.terrains.includes(state.hexGrid[camera.hexPos.r]?.[camera.hexPos.q]?.terrain)
+          cameraCell && a.terrains.includes(cameraCell.terrain)
         )
 
+        const updatedCodex = [...state.animalCodex]
+        const identifiedThisTime: string[] = []
+
         for (let d = 0; d < daysDeployed; d++) {
-          if (Math.random() < 0.3 && nearbyAnimals.length > 0) {
+          if (Math.random() < 0.4 && nearbyAnimals.length > 0) {
             const animal = nearbyAnimals[Math.floor(Math.random() * nearbyAnimals.length)]
             newPhotos.push({
               speciesId: animal.id,
@@ -347,19 +354,44 @@ export const useGameStore = create<GameState & GameActions>()(
               season: getDaySeason(camera.deployDay + d),
             })
 
-            const codexEntry = state.animalCodex.find(e => e.speciesId === animal.id)
-            if (codexEntry) {
-              codexEntry.photoCount++
+            const codexIdx = updatedCodex.findIndex(e => e.speciesId === animal.id)
+            if (codexIdx >= 0) {
+              updatedCodex[codexIdx] = {
+                ...updatedCodex[codexIdx],
+                photoCount: updatedCodex[codexIdx].photoCount + 1,
+                identified: true,
+                discoveryDay: updatedCodex[codexIdx].discoveryDay || state.day,
+              }
+              if (!identifiedThisTime.includes(animal.id)) identifiedThisTime.push(animal.id)
             }
           }
         }
 
+        const camerasUpdated = state.cameras.map(c =>
+          c.id === cameraId ? { ...c, retrieved: true, retrieveDay: state.day, photos: [...c.photos, ...newPhotos] } : c
+        )
+
+        const existingCameraItem = state.inventory.find(e => e.id === 'ir_camera')
+        let inventoryUpdated = [...state.inventory]
+        if (existingCameraItem) {
+          inventoryUpdated = inventoryUpdated.map(e =>
+            e.id === 'ir_camera' ? { ...e, quantity: e.quantity + 1 } : e
+          )
+        } else {
+          inventoryUpdated.push({ ...EQUIPMENT.find(e => e.id === 'ir_camera')!, quantity: 1, equipped: false })
+        }
+
+        const identifiedCount = updatedCodex.filter(e => e.identified).length
+
         set({
-          cameras: state.cameras.map(c =>
-            c.id === cameraId ? { ...c, retrieved: true, retrieveDay: state.day, photos: [...c.photos, ...newPhotos] } : c
-          ),
-          inventory: [...state.inventory, { ...EQUIPMENT.find(e => e.id === 'ir_camera')!, quantity: 1, equipped: false }],
-          stats: { ...state.stats, totalPhotosTaken: state.stats.totalPhotosTaken + newPhotos.length },
+          cameras: camerasUpdated,
+          inventory: inventoryUpdated,
+          animalCodex: updatedCodex,
+          stats: {
+            ...state.stats,
+            totalPhotosTaken: state.stats.totalPhotosTaken + newPhotos.length,
+            speciesIdentified: identifiedCount,
+          },
         })
       },
 
@@ -416,25 +448,37 @@ export const useGameStore = create<GameState & GameActions>()(
           injuryLevel: injuryLevel as any,
           treatment: '',
           startDay: state.day,
-          healthProgress: 0,
+          healthProgress: 10,
           released: false,
         }
         set({ rescues: [...state.rescues, rescue] })
+        return rescue.id
       },
 
       treatRescue: (rescueId, treatment) => {
         const state = get()
+        let budgetCost = 0
+        let baseChance = 0.5
+
+        if (treatment === 'conservative') { budgetCost = 50; baseChance = 0.5 }
+        else if (treatment === 'standard') { budgetCost = 150; baseChance = 0.7 }
+        else if (treatment === 'surgery') { budgetCost = 300; baseChance = 0.9 }
+
+        if (state.budget < budgetCost) return false
+
         const hasFirstAid = state.inventory.find(e => e.id === 'first_aid' && e.equipped)
-        const baseChance = 0.6
         const bonus = hasFirstAid ? 0.15 : 0
-        const success = Math.random() < baseChance + bonus
+        const success = Math.random() < Math.min(0.95, baseChance + bonus)
 
         if (success) {
           set({
+            budget: state.budget - budgetCost,
             rescues: state.rescues.map(r =>
               r.id === rescueId ? { ...r, treatment, healthProgress: Math.min(r.healthProgress + 30, 100) } : r
             ),
           })
+        } else {
+          set({ budget: state.budget - Math.floor(budgetCost / 2) })
         }
 
         return success
@@ -466,6 +510,7 @@ export const useGameStore = create<GameState & GameActions>()(
           disarmed: false,
         }
         set({ traps: [...state.traps, trap] })
+        return trap.id
       },
 
       disarmTrap: (trapId) => {
@@ -503,61 +548,93 @@ export const useGameStore = create<GameState & GameActions>()(
 
       assembleClues: (clueIds) => {
         const state = get()
-        set({
-          clueFragments: state.clueFragments.map(c =>
-            clueIds.includes(c.id) ? { ...c, assembled: true } : c
-          ),
-        })
 
-        for (const case_ of state.poacherCases) {
-          const caseClues = state.clueFragments.filter(c => case_.clueIds.includes(c.id) && c.assembled)
-          if (caseClues.length === case_.clueIds.length) {
-            set({
-              poacherCases: state.poacherCases.map(p =>
-                p.id === case_.id ? { ...p, solved: true } : p
-              ),
-              reputation: state.reputation + 20,
-            })
+        const updatedFragments = state.clueFragments.map(c =>
+          clueIds.includes(c.id) ? { ...c, assembled: true } : c
+        )
+        const totalCluesCount = updatedFragments.length
+        const assembledCountAfter = updatedFragments.filter(c => c.assembled).length
+
+        set({ clueFragments: updatedFragments })
+
+        let casesUpdated = [...state.poacherCases]
+        let reputationAdded = 0
+
+        for (let i = 0; i < casesUpdated.length; i++) {
+          const case_ = casesUpdated[i]
+          if (!case_.solved) {
+            const requiredCount = case_.clueIds.length
+            if (totalCluesCount >= requiredCount) {
+              casesUpdated[i] = { ...case_, solved: true }
+              reputationAdded += 20
+            }
           }
+        }
+
+        if (casesUpdated.some((c, i) => c.solved !== state.poacherCases[i].solved)) {
+          set({
+            poacherCases: casesUpdated,
+            reputation: state.reputation + reputationAdded,
+          })
         }
       },
 
       startNegotiation: (eventId) => {
         const state = get()
-        const template = state.negotiations.length === 0 ? [] : []
-        set({ currentScreen: 'negotiate' })
+        set({ currentScreen: 'negotiate', pendingEventId: eventId })
       },
 
       resolveNegotiation: (eventId, stance) => {
         const state = get()
         let repChange = 0
         let budgetCost = 0
+        let outcome = ''
 
         switch (stance) {
           case 'empathetic':
             repChange = 5
             budgetCost = 100
+            outcome = '以共情和耐心化解矛盾，村民纷纷点头认可'
             break
           case 'pragmatic':
             repChange = 3
             budgetCost = 50
+            outcome = '各退一步达成务实共识，双方基本满意'
             break
           case 'strict':
             repChange = -2
             budgetCost = 0
+            outcome = '坚持原则严格执法，虽有成效但略有微词'
             break
           case 'educational':
             repChange = 8
             budgetCost = 80
+            outcome = '深入浅出科普生态价值，村民从抵触转为支持'
             break
+        }
+
+        const resultRecord: NegotiationEvent = {
+          id: `neg_record_${Date.now()}`,
+          eventId,
+          title: `第 ${state.day} 天协商记录`,
+          stance: stance as any,
+          outcome,
+          repChange,
+          budgetCost,
+          day: state.day,
+          season: state.season,
         }
 
         set({
           reputation: Math.max(0, state.reputation + repChange),
           budget: Math.max(0, state.budget - budgetCost),
+          negotiations: [...state.negotiations, resultRecord],
+          pendingEventId: null,
           stats: { ...state.stats, negotiationsCompleted: state.stats.negotiationsCompleted + 1 },
         })
         get().checkAchievements()
+
+        return { repChange, budgetCost }
       },
 
       completeMission: (missionId) => {
@@ -665,6 +742,23 @@ export const useGameStore = create<GameState & GameActions>()(
         const newWeather = generateWeather(state.season)
         const newForecast = generateForecast(state.season, 3)
         set({ weather: newWeather, weatherForecast: newForecast })
+      },
+
+      markEventResolved: (eventId) => {
+        const state = get()
+        if (!state.activePatrol) return
+        set({
+          activePatrol: {
+            ...state.activePatrol,
+            events: state.activePatrol.events.map(e =>
+              e.id === eventId ? { ...e, resolved: true } : e
+            ),
+          },
+        })
+      },
+
+      setPendingEvent: (eventId) => {
+        set({ pendingEventId: eventId })
       },
     }),
     {

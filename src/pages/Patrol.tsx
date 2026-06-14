@@ -4,7 +4,7 @@ import { useGameStore } from '@/stores/gameStore'
 import { TERRAIN_DATA, WEATHER_DATA, ANIMALS } from '@/data/gameData'
 import type { HexCoord, PatrolEvent } from '@/types/game'
 import { hexDistance, hexToPixel } from '@/utils/hexUtils'
-import { Footprints, Shield, Heart, Camera, MessageSquare, ChevronRight, XCircle, Zap, MapPin } from 'lucide-react'
+import { Footprints, Shield, Heart, Camera, MessageSquare, ChevronRight, XCircle, Zap, MapPin, AlertCircle, CheckCircle } from 'lucide-react'
 
 const MINI_HEX = 16
 
@@ -22,8 +22,18 @@ export default function Patrol() {
   const {
     activePatrol, hexGrid, mapWidth, mapHeight, stamina, maxStamina,
     season, traps, processPatrolStep, endPatrol, identifyFootprint,
-    collectSample, disarmTrap, startRescue, deployCamera, setScreen
+    collectSample, disarmTrap, startRescue, deployCamera, setScreen,
+    markEventResolved, setPendingEvent, discoverTrap
   } = useGameStore()
+
+  const [selectedSpecies, setSelectedSpecies] = useState<string>('')
+  const [actionMsg, setActionMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [stepTrapId, setStepTrapId] = useState<string | null>(null)
+
+  const showMsg = (text: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setActionMsg({ text, type })
+    setTimeout(() => setActionMsg(null), 2500)
+  }
 
   const handleEndPatrol = () => {
     endPatrol()
@@ -66,19 +76,78 @@ export default function Patrol() {
     ? ANIMALS.filter(a => a.seasons.includes(season) && a.terrains.includes(currentCell.terrain)).slice(0, 3)
     : []
 
-  const localTraps = traps.filter(t =>
-    !t.disarmed && t.hexPos.q === currentPos.q && t.hexPos.r === currentPos.r
+  const getLocalTraps = (pos: HexCoord) => traps.filter(t =>
+    !t.disarmed && t.hexPos.q === pos.q && t.hexPos.r === pos.r
   )
 
-  const handleDisarm = () => {
-    if (localTraps.length > 0) {
-      disarmTrap(localTraps[0].id)
+  const handleDisarm = (event: PatrolEvent) => {
+    let trapId = stepTrapId
+    if (!trapId) {
+      const locals = getLocalTraps(currentPos)
+      if (locals.length > 0) {
+        trapId = locals[0].id
+      } else {
+        trapId = discoverTrap(currentPos)
+      }
+      setStepTrapId(trapId)
+    }
+
+    const ok = disarmTrap(trapId)
+    if (ok) {
+      showMsg('✅ 陷阱成功拆除！已获得线索碎片', 'success')
+      markEventResolved(event.id)
+      setStepTrapId(null)
+    } else {
+      showMsg('❌ 拆除失败！手部受伤，体力下降', 'error')
     }
   }
 
-  const handleStartRescue = () => {
+  const handleStartRescue = (event: PatrolEvent) => {
     const animal = terrainAnimals[0]
-    if (animal) startRescue(animal.id, 'moderate')
+    if (animal) {
+      startRescue(animal.id, 'moderate')
+      markEventResolved(event.id)
+      showMsg(`✅ ${animal.icon} ${animal.name} 已转移至救助中心接受治疗`, 'success')
+    }
+  }
+
+  const handleIdentify = (event: PatrolEvent) => {
+    if (!selectedSpecies) return
+    const ok = identifyFootprint(selectedSpecies)
+    const animal = ANIMALS.find(a => a.id === selectedSpecies)
+    if (ok) {
+      showMsg(`✅ 足迹鉴定成功！确认为 ${animal?.icon} ${animal?.name}`, 'success')
+    } else {
+      showMsg('❌ 足迹鉴定失败，痕迹不够清晰', 'error')
+    }
+    markEventResolved(event.id)
+    setSelectedSpecies('')
+  }
+
+  const handleCollectSample = (event: PatrolEvent) => {
+    if (!selectedSpecies) return
+    collectSample(selectedSpecies, 'footprint')
+    const animal = ANIMALS.find(a => a.id === selectedSpecies)
+    showMsg(`📋 已采集 ${animal?.name} 样本，带回实验室分析`, 'info')
+    markEventResolved(event.id)
+    setSelectedSpecies('')
+  }
+
+  const handleDeployCamera = (event: PatrolEvent) => {
+    const hasCamera = useGameStore.getState().inventory.find(e => e.id === 'ir_camera' && e.quantity > 0)
+    if (!hasCamera) {
+      showMsg('❌ 背包中没有可用的红外相机，请先到营地商店购买', 'error')
+      return
+    }
+    deployCamera(currentPos)
+    markEventResolved(event.id)
+    showMsg('📷 红外相机布设成功！过几日可回收查看照片', 'success')
+  }
+
+  const handleStartNegotiation = (event: PatrolEvent) => {
+    setPendingEvent(event.id)
+    setScreen('negotiate')
+    navigate('/negotiate')
   }
 
   const renderEvent = (event: PatrolEvent) => {
@@ -113,14 +182,14 @@ export default function Patrol() {
               </select>
               <button
                 className="btn-wood primary text-sm"
-                onClick={() => selectedSpecies && identifyFootprint(selectedSpecies)}
+                onClick={() => handleIdentify(event)}
                 disabled={!selectedSpecies}
               >
                 鉴定足迹
               </button>
               <button
                 className="btn-wood text-sm"
-                onClick={() => selectedSpecies && collectSample(selectedSpecies, 'footprint')}
+                onClick={() => handleCollectSample(event)}
                 disabled={!selectedSpecies}
               >
                 采集样本
@@ -135,8 +204,14 @@ export default function Patrol() {
               <Shield size={18} /> 发现陷阱
             </div>
             <p className="text-sm text-gray-300">此处发现疑似盗猎陷阱，需要尽快拆除</p>
-            <p className="text-xs text-yellow-600">⚠ 拆除失败可能受伤并消耗额外体力</p>
-            <button className="btn-wood danger text-sm" onClick={handleDisarm}>
+            <div className="flex items-start gap-2 text-xs text-yellow-600 bg-yellow-900/20 p-2 rounded">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <div>
+                <p>拆除成功可获得盗猎线索碎片</p>
+                <p>失败可能受伤并消耗额外体力（建议配备钢丝剪）</p>
+              </div>
+            </div>
+            <button className="btn-wood danger text-sm" onClick={() => handleDisarm(event)}>
               拆除陷阱
             </button>
           </div>
@@ -147,8 +222,15 @@ export default function Patrol() {
             <div className="flex items-center gap-2 text-pink-400 font-title">
               <Heart size={18} /> 救助事件
             </div>
-            <p className="text-sm text-gray-300">发现受伤的野生动物，需要紧急救助</p>
-            <button className="btn-wood primary text-sm" onClick={handleStartRescue}>
+            <p className="text-sm text-gray-300">
+              {terrainAnimals[0] ? (
+                <>发现受伤的 {terrainAnimals[0].icon} {terrainAnimals[0].name}，需要紧急救助</>
+              ) : (
+                <>发现受伤的野生动物，需要紧急救助</>
+              )}
+            </p>
+            <p className="text-xs text-gray-500">⚠ 转移至救助中心后可前往「动物救助」页面继续治疗</p>
+            <button className="btn-wood primary text-sm" onClick={() => handleStartRescue(event)}>
               开始救助
             </button>
           </div>
@@ -159,8 +241,12 @@ export default function Patrol() {
             <div className="flex items-center gap-2 text-cyan-400 font-title">
               <Camera size={18} /> 相机布设点
             </div>
-            <p className="text-sm text-gray-300">此处适合布设红外相机监测动物活动</p>
-            <button className="btn-wood primary text-sm" onClick={() => deployCamera(currentPos)}>
+            <p className="text-sm text-gray-300">此处地势开阔、植被覆盖适中，适合布设红外相机监测动物活动</p>
+            <div className="text-xs text-gray-500 bg-cyan-900/20 p-2 rounded space-y-0.5">
+              <p>• 布设后至少等待 1 天再回收</p>
+              <p>• 回收后将获得随机物种照片并更新图鉴</p>
+            </div>
+            <button className="btn-wood primary text-sm" onClick={() => handleDeployCamera(event)}>
               布设相机
             </button>
           </div>
@@ -171,8 +257,14 @@ export default function Patrol() {
             <div className="flex items-center gap-2 text-purple-400 font-title">
               <MessageSquare size={18} /> 村民对话
             </div>
-            <p className="text-sm text-gray-300">遇到当地村民，可以尝试沟通协商</p>
-            <button className="btn-wood text-sm" onClick={() => setScreen('negotiate')}>
+            <p className="text-sm text-gray-300">
+              遇到当地村民因放牧、采集等问题发生争执，可以尝试介入沟通协商
+            </p>
+            <div className="text-xs text-gray-500 bg-purple-900/20 p-2 rounded space-y-0.5">
+              <p>• 不同立场影响声望变化和预算消耗</p>
+              <p>• 协商完成后此事件自动结束</p>
+            </div>
+            <button className="btn-wood text-sm" onClick={() => handleStartNegotiation(event)}>
               开始对话
             </button>
           </div>
@@ -181,6 +273,9 @@ export default function Patrol() {
         return (
           <div className="wood-card p-4 animate-fadeIn">
             <p className="text-sm text-gray-400">{event.description}</p>
+            <button className="btn-wood text-sm mt-2" onClick={() => markEventResolved(event.id)}>
+              标记完成
+            </button>
           </div>
         )
     }
@@ -236,6 +331,18 @@ export default function Patrol() {
         </div>
 
         <div className="flex-1 p-4 overflow-y-auto scrollbar-thin">
+          {actionMsg && (
+            <div className={`mb-3 px-4 py-2 rounded animate-fadeIn flex items-center gap-2 text-sm
+              ${actionMsg.type === 'success' ? 'bg-green-900/40 text-green-300 border border-green-700/50' : ''}
+              ${actionMsg.type === 'error' ? 'bg-red-900/40 text-red-300 border border-red-700/50' : ''}
+              ${actionMsg.type === 'info' ? 'bg-blue-900/40 text-blue-300 border border-blue-700/50' : ''}
+            `}>
+              {actionMsg.type === 'success' && <CheckCircle size={14} />}
+              {actionMsg.type === 'error' && <AlertCircle size={14} />}
+              {actionMsg.text}
+            </div>
+          )}
+
           {currentTerrain && (
             <div className="text-sm text-gray-300 mb-3">
               当前位置: {currentTerrain.icon} {currentTerrain.name} ({currentPos.q}, {currentPos.r})
@@ -255,8 +362,9 @@ export default function Patrol() {
               <button className="btn-wood primary" onClick={handleEndPatrol}>返回营地</button>
             </div>
           ) : unresolved.length === 0 ? (
-            <div className="wood-card p-6 text-center text-gray-400">
-              <p>点击"继续前进"前往下一个位置</p>
+            <div className="wood-card p-6 text-center text-gray-400 animate-fadeIn">
+              <p className="mb-2">🌿 当前区域暂无未处理事件</p>
+              <p>点击「继续前进」前往下一个位置</p>
             </div>
           ) : null}
 
@@ -287,18 +395,25 @@ export default function Patrol() {
           <div className="wood-card px-3 py-2">
             <h3 className="font-title text-amber-400 text-sm mb-1">遭遇事件</h3>
             <p className="text-2xl text-white font-bold">{events.length}</p>
+            <p className="text-xs text-gray-500">未处理: {unresolved.length}</p>
           </div>
 
           <div className="wood-card px-3 py-2">
-            <h3 className="font-title text-amber-400 text-sm mb-1">样本收集</h3>
-            <p className="text-2xl text-white font-bold">
-              {events.filter(e => e.type === 'footprint' && e.resolved).length}
+            <h3 className="font-title text-amber-400 text-sm mb-1">已处理</h3>
+            <p className="text-2xl text-green-300 font-bold">
+              {events.filter(e => e.resolved).length}
             </p>
           </div>
 
           <div className="wood-card px-3 py-2">
-            <h3 className="font-title text-amber-400 text-sm mb-1">已探索</h3>
+            <h3 className="font-title text-amber-400 text-sm mb-1">路线进度</h3>
             <p className="text-lg text-white">{currentStep}/{route.length} 步</p>
+            <div className="w-full bg-black/40 rounded-full h-2 mt-2">
+              <div
+                className="bg-amber-400 h-full rounded-full transition-all duration-300"
+                style={{ width: `${(currentStep / route.length) * 100}%` }}
+              />
+            </div>
           </div>
         </div>
       </div>

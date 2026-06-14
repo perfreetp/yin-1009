@@ -153,6 +153,7 @@ export interface PoacherCase {
 
 export interface NegotiationEvent {
   id: string
+  eventId?: string
   title: string
   description: string
   villagerName: string
@@ -160,8 +161,14 @@ export interface NegotiationEvent {
   stanceOptions: NegotiationStance[]
   resolved: boolean
   outcome?: string
-  reputationChange: number
-  budgetCost: number
+  reputationChange?: number
+  budgetCost?: number
+  stance?: NegotiationStance | string
+  day?: number
+  season?: Season
+  icon?: string
+  villagerQuote?: string
+  repChange?: number
 }
 
 export interface Mission {
@@ -238,6 +245,7 @@ export interface GameState {
     events: PatrolEvent[]
     staminaUsed: number
   } | null
+  pendingEventId: string | null
   ending: EndingType | null
   gamePhase: 'menu' | 'playing' | 'season_end' | 'year_end' | 'game_over'
 }
