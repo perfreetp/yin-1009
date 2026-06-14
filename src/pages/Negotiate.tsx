@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, MessageCircle, ThumbsUp, ThumbsDown, BookOpen, ArrowLeft, TrendingUp, TrendingDown, Wallet, Award } from 'lucide-react'
+import { Users, MessageCircle, ThumbsUp, ThumbsDown, BookOpen, ArrowLeft, TrendingUp, TrendingDown, Wallet, Award, AlertCircle, CheckCircle } from 'lucide-react'
 import { useGameStore } from '@/stores/gameStore'
 import { NEGOTIATION_EVENTS } from '@/data/gameData'
 import type { NegotiationEvent } from '@/types/game'
@@ -14,39 +14,64 @@ const STANCE_INFO: Record<string, { label: string; repChange: number; budgetCost
 
 export default function NegotiatePage() {
   const navigate = useNavigate()
-  const [activeEvent, setActiveEvent] = useState<string | null>(null)
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
+  const [fromPatrol, setFromPatrol] = useState(false)
   const [resultMsg, setResultMsg] = useState<{ title: string; rep: number; budget: number } | null>(null)
+
   const {
     negotiations, reputation, budget, pendingEventId, activePatrol,
     resolveNegotiation, markEventResolved, setPendingEvent
   } = useGameStore()
 
+  // 如果是从巡护跳转过来的，找到对应的模板 ID
   useEffect(() => {
-    if (pendingEventId) {
-      setActiveEvent(pendingEventId)
+    if (pendingEventId && activePatrol) {
+      const patrolEvent = activePatrol.events.find(e => e.id === pendingEventId)
+      if (patrolEvent?.templateId) {
+        setActiveTemplateId(patrolEvent.templateId)
+        setFromPatrol(true)
+        return
+      }
     }
-  }, [pendingEventId])
+    if (!pendingEventId) {
+      setFromPatrol(false)
+    }
+  }, [pendingEventId, activePatrol])
 
+  // 已使用的模板 ID 列表
+  const usedTemplateIds = useMemo(
+    () => negotiations.map(r => r.eventId).filter(Boolean) as string[],
+    [negotiations]
+  )
+
+  // 待处理的模板（还没协商过的）
+  const availableTemplates = useMemo(
+    () => NEGOTIATION_EVENTS.filter(e => !usedTemplateIds.includes(e.id)),
+    [usedTemplateIds]
+  )
+
+  // 当前正在处理的事件数据
+  const currentEventData = useMemo(() => {
+    if (!activeTemplateId) return null
+    return NEGOTIATION_EVENTS.find(e => e.id === activeTemplateId) || null
+  }, [activeTemplateId])
+
+  // 历史记录
   const recordList: NegotiationEvent[] = negotiations
-  const templateEvent = activeEvent ? NEGOTIATION_EVENTS.find(e => e.id === activeEvent) : null
-  const fallbackEvent = NEGOTIATION_EVENTS[0]
 
-  const usedTemplateIds = recordList.map(r => r.eventId)
-  const availableTemplates = NEGOTIATION_EVENTS.filter(e => !usedTemplateIds.includes(e.id))
-
-  const currentEventData = templateEvent || (activeEvent ? fallbackEvent : null)
-
-  const handleResolve = (eventId: string, stance: string) => {
+  const handleResolve = (templateId: string, stance: string) => {
     const info = STANCE_INFO[stance]
     if (!info) return
     if (budget < info.budgetCost) return
 
-    const result = resolveNegotiation(eventId, stance)
+    const result = resolveNegotiation(templateId, stance)
 
-    if (activePatrol && eventId) {
-      markEventResolved(eventId)
+    // 如果是从巡护来的，同时标记巡护事件已解决
+    if (fromPatrol && pendingEventId) {
+      markEventResolved(pendingEventId)
+      setPendingEvent(null)
+      setFromPatrol(false)
     }
-    setPendingEvent(null)
 
     if (result) {
       setResultMsg({
@@ -56,11 +81,15 @@ export default function NegotiatePage() {
       })
       setTimeout(() => setResultMsg(null), 3500)
     }
-    setActiveEvent(null)
+    setActiveTemplateId(null)
   }
 
-  const backToPatrol = () => {
-    if (activePatrol) {
+  const handleBack = () => {
+    if (fromPatrol && pendingEventId) {
+      setPendingEvent(null)
+      setFromPatrol(false)
+    }
+    if (activePatrol && fromPatrol) {
       navigate('/patrol')
     } else {
       navigate('/camp')
@@ -73,8 +102,8 @@ export default function NegotiatePage() {
         <h1 className="font-title text-2xl text-amber-200 flex items-center gap-2">
           <Users className="w-6 h-6" /> 村庄协商
         </h1>
-        <button className="btn-wood text-sm flex items-center gap-1" onClick={backToPatrol}>
-          <ArrowLeft size={14} /> {activePatrol ? '返回巡护' : '返回营地'}
+        <button className="btn-wood text-sm flex items-center gap-1" onClick={handleBack}>
+          <ArrowLeft size={14} /> {activePatrol && fromPatrol ? '返回巡护' : '返回营地'}
         </button>
       </div>
 
@@ -104,7 +133,9 @@ export default function NegotiatePage() {
 
       {resultMsg && (
         <div className="mb-4 wood-card p-4 border border-green-700/50 bg-green-900/30 animate-fadeIn">
-          <h3 className="font-title text-green-300 text-lg mb-2">✅ {resultMsg.title}</h3>
+          <h3 className="font-title text-green-300 text-lg mb-2">
+            ✅ {resultMsg.title}
+          </h3>
           <div className="flex flex-wrap gap-3 text-sm">
             <div className={`flex items-center gap-1 ${resultMsg.rep >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {resultMsg.rep >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
@@ -118,13 +149,24 @@ export default function NegotiatePage() {
         </div>
       )}
 
-      {activeEvent && currentEventData ? (
+      {fromPatrol && pendingEventId && (
+        <div className="mb-4 p-3 rounded bg-purple-900/30 border border-purple-600/40 flex items-center gap-2 animate-fadeIn">
+          <AlertCircle size={16} className="text-purple-400 shrink-0" />
+          <span className="text-purple-200 text-sm">
+            📢 来自巡护途中的紧急协商事件，请处理后继续巡护
+          </span>
+        </div>
+      )}
+
+      {activeTemplateId && currentEventData ? (
         <div className="animate-fadeIn">
           <div className="wood-card p-5 mb-4">
             <div className="flex items-start gap-3 mb-3">
               <div className="text-4xl">{currentEventData.icon || '🏘️'}</div>
               <div className="flex-1">
-                <h2 className="font-title text-xl text-amber-300 mb-1">{currentEventData.title}</h2>
+                <h2 className="font-title text-xl text-amber-300 mb-1">
+                  {currentEventData.title}
+                </h2>
                 <div className="text-amber-200/60 text-xs flex items-center gap-1">
                   <MessageCircle className="w-3.5 h-3.5" />
                   村民代表: {currentEventData.villagerName} · {currentEventData.conflictType}
@@ -150,9 +192,11 @@ export default function NegotiatePage() {
               return (
                 <button
                   key={stance}
-                  className={`wood-card p-4 text-left transition-all ${canAfford ? 'hover:ring-2 hover:ring-amber-400 hover:-translate-y-0.5 cursor-pointer' : 'opacity-40 cursor-not-allowed'}`}
+                  className={`wood-card p-4 text-left transition-all
+                    ${canAfford ? 'hover:ring-2 hover:ring-amber-400 hover:-translate-y-0.5 cursor-pointer' : 'opacity-40 cursor-not-allowed'}
+                  `}
                   disabled={!canAfford}
-                  onClick={() => handleResolve(activeEvent, stance)}
+                  onClick={() => handleResolve(activeTemplateId, stance)}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xl">{info.icon}</span>
@@ -177,52 +221,57 @@ export default function NegotiatePage() {
             })}
           </div>
 
-          <button className="btn-wood w-full" onClick={() => {
-            setActiveEvent(null)
-            if (pendingEventId) setPendingEvent(null)
-          }}>稍后处理</button>
+          <button
+            className="btn-wood w-full"
+            onClick={() => {
+              setActiveTemplateId(null)
+              if (fromPatrol && pendingEventId) {
+                setPendingEvent(null)
+                setFromPatrol(false)
+              }
+            }}
+          >
+            稍后处理
+          </button>
         </div>
       ) : (
         <div className="animate-fadeIn space-y-6">
           <div>
             <h2 className="font-title text-lg text-amber-300 mb-2 flex items-center gap-2">
-              <span>📋</span> 当前待协商
+              <span>📋</span> 待处理协商 ({availableTemplates.length})
             </h2>
-            {availableTemplates.length === 0 && !pendingEventId ? (
+
+            {availableTemplates.length === 0 ? (
               <div className="wood-card p-6 text-center text-amber-200/50">
-                <div className="text-4xl mb-2">🏡</div>
-                <p>暂无需要协商的事件</p>
-                <p className="text-xs mt-1 text-gray-500">巡护途中可能会随机遇到村民纠纷</p>
+                <div className="text-4xl mb-2">✅</div>
+                <p>所有已知纠纷均已处理完毕</p>
+                <p className="text-xs mt-1 text-gray-500">
+                  巡护途中可能会随机遇到新的村民纠纷事件
+                </p>
               </div>
             ) : (
-              <div className="space-y-2 mb-2">
-                {pendingEventId && (
-                  <div className="wood-card p-4 ring-2 ring-purple-500/60 border-purple-600/40">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="text-purple-300 font-bold mb-1 flex items-center gap-1">
-                          <span className="animate-pulse">🔔</span> 来自巡护的紧急事件
-                        </div>
-                        <p className="text-xs text-gray-400 mb-2">请尽快前往处理，以继续巡护进度</p>
-                      </div>
-                      <button
-                        className="btn-wood primary text-sm"
-                        onClick={() => setActiveEvent(pendingEventId)}
-                      >立即处理</button>
-                    </div>
-                  </div>
-                )}
+              <div className="space-y-2">
                 {availableTemplates.map(event => (
                   <button
                     key={event.id}
                     className="wood-card p-3 w-full text-left hover:ring-2 hover:ring-amber-400 transition-all"
-                    onClick={() => setActiveEvent(event.id)}
+                    onClick={() => setActiveTemplateId(event.id)}
                   >
                     <div className="flex items-start gap-2">
                       <span className="text-2xl">{event.icon || '🏘️'}</span>
                       <div className="flex-1">
-                        <div className="text-amber-200 font-bold mb-0.5">{event.title}</div>
-                        <div className="text-amber-200/60 text-xs">{event.villagerName} · {event.conflictType}</div>
+                        <div className="text-amber-200 font-bold mb-0.5">
+                          {event.title}
+                        </div>
+                        <div className="text-amber-200/60 text-xs">
+                          {event.villagerName} · {event.conflictType}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1 line-clamp-2">
+                          {event.description}
+                        </p>
+                      </div>
+                      <div className="text-amber-400">
+                        <CheckCircle size={16} className="opacity-0" />
                       </div>
                     </div>
                   </button>
@@ -245,12 +294,22 @@ export default function NegotiatePage() {
                         <div className="text-amber-200 font-bold flex items-center gap-1.5">
                           {stanceInfo?.icon || '📝'} {record.title}
                         </div>
-                        <div className="text-xs text-gray-500">第 {record.day} 天</div>
+                        <div className="text-xs text-gray-500">
+                          第 {record.day} 天
+                        </div>
                       </div>
-                      <p className="text-sm text-gray-300 mb-2">{record.outcome || '协商顺利完成'}</p>
+                      <p className="text-sm text-gray-300 mb-2">
+                        {record.outcome || '协商顺利完成'}
+                      </p>
                       <div className="flex flex-wrap gap-2 text-xs">
                         {typeof record.repChange === 'number' && (
-                          <span className={`px-2 py-0.5 rounded-full ${record.repChange >= 0 ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
+                          <span
+                            className={`px-2 py-0.5 rounded-full ${
+                              record.repChange >= 0
+                                ? 'bg-green-900/40 text-green-400'
+                                : 'bg-red-900/40 text-red-400'
+                            }`}
+                          >
                             声望{record.repChange > 0 ? '+' : ''}{record.repChange}
                           </span>
                         )}

@@ -66,10 +66,17 @@ export default function PoacherPage() {
       if (newSolved > 0) {
         showToast(`🎉 侦破 ${newSolved} 起盗猎案件！声望+${20 * newSolved}`, 'success')
       } else {
-        const stillNeed = poacherCases
-          .filter(p => !p.solved)
-          .map(p => `${p.name}还需${Math.max(0, p.clueIds.length - state.clueFragments.length)}线索`)
-        showToast(`🧩 线索已整理归档。${stillNeed.join('；') || '所有案件已侦破！'}`, 'info')
+        const unsolvedCases = state.poacherCases.filter(p => !p.solved)
+        if (unsolvedCases.length === 0) {
+          showToast('✅ 所有案件均已侦破！', 'success')
+        } else {
+          const stillNeed = unsolvedCases
+            .map(p => {
+              const have = state.clueFragments.filter(c => c.poacherCaseId === p.id).length
+              return `${p.name}还需${Math.max(0, p.clueIds.length - have)}线索`
+            })
+          showToast(`🧩 线索已归档。${stillNeed.join('；')}`, 'info')
+        }
       }
     }, 100)
   }
@@ -249,8 +256,9 @@ export default function PoacherPage() {
               <div className="space-y-3">
                 {poacherCases.map(pc => {
                   const required = pc.clueIds.length
-                  const have = clueFragments.length
+                  const have = clueFragments.filter(c => c.poacherCaseId === pc.id).length
                   const progress = Math.min(100, Math.floor((have / required) * 100))
+                  const canSolve = have >= required && !pc.solved
                   return (
                     <div key={pc.id} className={`p-3 rounded wood-card border ${pc.solved ? 'border-green-700/40' : 'border-amber-900/30'}`}>
                       <div className="flex items-start justify-between mb-2">
@@ -285,12 +293,12 @@ export default function PoacherPage() {
 
                       {!pc.solved && have < required && (
                         <div className="text-xs text-gray-500 mt-2">
-                          还需收集 <span className="text-yellow-500 font-bold">{required - have}</span> 个线索碎片即可尝试拼合
+                          还需收集 <span className="text-yellow-500 font-bold">{required - have}</span> 个相关线索碎片
                         </div>
                       )}
                       {!pc.solved && have >= required && (
                         <div className="text-xs text-yellow-400 mt-2 flex items-center gap-1">
-                          <Puzzle size={12} /> 线索已充足，点击下方「拼合线索」按钮尝试破案
+                          <Puzzle size={12} /> 线索已充足，点击「拼合线索」侦破此案
                         </div>
                       )}
                       {pc.solved && (
@@ -319,18 +327,34 @@ export default function PoacherPage() {
             ) : (
               <>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
-                  {unassembledClues.map((clue, idx) => (
-                    <div key={clue.id} className="wood-card p-3 flex items-start gap-2">
-                      <div className="w-10 h-10 rounded bg-purple-900/40 flex items-center justify-center shrink-0 text-xl">
-                        {['🔩', '🧵', '👣', '📝', '🪜', '💰'][idx % 6]}
+                  {unassembledClues.map((clue, idx) => {
+                    const caseInfo = poacherCases.find(p => p.id === clue.poacherCaseId)
+                    return (
+                      <div key={clue.id} className="wood-card p-3 flex items-start gap-2">
+                        <div className="w-10 h-10 rounded bg-purple-900/40 flex items-center justify-center shrink-0 text-xl">
+                          {['🔩', '🧵', '👣', '📝', '🪜', '💰'][idx % 6]}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-amber-200 text-sm font-bold">
+                            线索 #{String(idx + 1).padStart(2, '0')}
+                          </div>
+                          <div className="text-amber-200/70 text-xs mt-0.5">
+                            {clue.description}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-gray-500 text-xs">
+                              第 {clue.foundDay} 天发现
+                            </span>
+                            {caseInfo && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-300">
+                                关联: {caseInfo.name}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-amber-200 text-sm font-bold">线索 #{String(idx + 1).padStart(2, '0')}</div>
-                        <div className="text-amber-200/70 text-xs mt-0.5">{clue.description}</div>
-                        <div className="text-gray-500 text-xs mt-1">第 {clue.foundDay} 天发现</div>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
 
                 {unassembledClues.length >= 1 && (

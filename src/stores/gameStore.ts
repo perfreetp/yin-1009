@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { GameState, HexCell, Season, Weather, OwnedEquipment, CameraPhoto, AnimalEntry, RescueRecord, PatrolRecord, Achievement, ClueFragment, Mission, NegotiationEvent, TrapInstance, EndingType, PlayerStats } from '@/types/game'
-import { EQUIPMENT, ANIMALS, ACHIEVEMENTS, MISSIONS, POACHER_CASES } from '@/data/gameData'
+import { EQUIPMENT, ANIMALS, ACHIEVEMENTS, MISSIONS, POACHER_CASES, NEGOTIATION_EVENTS } from '@/data/gameData'
 import { generateMap, hexDistance } from '@/utils/hexUtils'
 import { generateWeather, generateForecast, getDaySeason, getYearNumber, generateId, checkEventTrigger, determineEventType } from '@/utils/random'
 import { WEATHER_DATA, TERRAIN_DATA } from '@/data/gameData'
@@ -251,14 +251,38 @@ export const useGameStore = create<GameState & GameActions>()(
         let newEvents = [...state.activePatrol.events]
 
         if (checkEventTrigger(terrainData.eventRate, WEATHER_DATA[state.weather]?.eventMod || 1)) {
-          const eventType = determineEventType(cell.terrain)
-          newEvents.push({
+          const eventType = determineEventType(cell.terrain) as string
+
+          const newEvent: any = {
             id: generateId(),
             type: eventType as any,
             description: `在${terrainData.name}区域发现了异常`,
             resolved: false,
             day: state.day,
-          })
+          }
+
+          if (eventType === 'negotiate') {
+            const usedTemplateIds = state.negotiations.map(n => n.eventId).filter(Boolean) as string[]
+            const availableTemplates = NEGOTIATION_EVENTS.filter(e => !usedTemplateIds.includes(e.id))
+            if (availableTemplates.length > 0) {
+              const template = availableTemplates[Math.floor(Math.random() * availableTemplates.length)]
+              newEvent.templateId = template.id
+              newEvent.description = template.title
+            }
+          }
+
+          if (eventType === 'rescue') {
+            const nearbyAnimals = ANIMALS.filter(a =>
+              a.seasons.includes(state.season) && a.terrains.includes(cell.terrain)
+            )
+            if (nearbyAnimals.length > 0) {
+              const animal = nearbyAnimals[Math.floor(Math.random() * nearbyAnimals.length)]
+              newEvent.speciesId = animal.id
+              newEvent.description = `发现受伤的${animal.name}`
+            }
+          }
+
+          newEvents.push(newEvent)
         }
 
         const newGrid = state.hexGrid.map(row => row.map(c => ({ ...c })))
@@ -522,16 +546,37 @@ export const useGameStore = create<GameState & GameActions>()(
 
         if (success) {
           const clueId = `clue_${generateId()}`
+
+          const unsolvedCases = state.poacherCases.filter(c => !c.solved)
+          let assignedCaseId: string | undefined
+          if (unsolvedCases.length > 0) {
+            const randomCase = unsolvedCases[Math.floor(Math.random() * unsolvedCases.length)]
+            assignedCaseId = randomCase.id
+          }
+
+          const clueTypes: Array<'footprint_clue' | 'tool_mark' | 'camp_remnant' | 'witness'> = [
+            'tool_mark', 'footprint_clue', 'camp_remnant', 'witness'
+          ]
+          const clueType = clueTypes[Math.floor(Math.random() * clueTypes.length)]
+
+          const clueDescriptions: Record<string, string> = {
+            tool_mark: '从拆除的陷阱上发现了特殊工具痕迹',
+            footprint_clue: '陷阱附近发现了可疑的靴印',
+            camp_remnant: '附近发现了临时营地的残留痕迹',
+            witness: '附近村民反映曾见过陌生面孔出没',
+          }
+
           set({
             traps: state.traps.map(t =>
               t.id === trapId ? { ...t, disarmed: true, disarmMethod: 'tool' } : t
             ),
             clueFragments: [...state.clueFragments, {
               id: clueId,
-              type: 'tool_mark' as const,
-              description: '从拆除的陷阱上发现了工具痕迹',
+              type: clueType,
+              description: clueDescriptions[clueType] || '一条可疑的线索碎片',
               foundDay: state.day,
               assembled: false,
+              poacherCaseId: assignedCaseId,
             }],
             stats: { ...state.stats, trapsRemoved: state.stats.trapsRemoved + 1 },
             reputation: state.reputation + 3,
@@ -552,26 +597,26 @@ export const useGameStore = create<GameState & GameActions>()(
         const updatedFragments = state.clueFragments.map(c =>
           clueIds.includes(c.id) ? { ...c, assembled: true } : c
         )
-        const totalCluesCount = updatedFragments.length
-        const assembledCountAfter = updatedFragments.filter(c => c.assembled).length
-
         set({ clueFragments: updatedFragments })
 
         let casesUpdated = [...state.poacherCases]
         let reputationAdded = 0
+        let newlySolved = 0
 
         for (let i = 0; i < casesUpdated.length; i++) {
           const case_ = casesUpdated[i]
           if (!case_.solved) {
+            const caseCluesCount = updatedFragments.filter(c => c.poacherCaseId === case_.id).length
             const requiredCount = case_.clueIds.length
-            if (totalCluesCount >= requiredCount) {
+            if (caseCluesCount >= requiredCount) {
               casesUpdated[i] = { ...case_, solved: true }
               reputationAdded += 20
+              newlySolved++
             }
           }
         }
 
-        if (casesUpdated.some((c, i) => c.solved !== state.poacherCases[i].solved)) {
+        if (newlySolved > 0) {
           set({
             poacherCases: casesUpdated,
             reputation: state.reputation + reputationAdded,

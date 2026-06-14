@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import { TERRAIN_DATA, WEATHER_DATA, ANIMALS } from '@/data/gameData'
+import { TERRAIN_DATA, WEATHER_DATA, ANIMALS, NEGOTIATION_EVENTS } from '@/data/gameData'
 import type { HexCoord, PatrolEvent } from '@/types/game'
 import { hexDistance, hexToPixel } from '@/utils/hexUtils'
 import { Footprints, Shield, Heart, Camera, MessageSquare, ChevronRight, XCircle, Zap, MapPin, AlertCircle, CheckCircle } from 'lucide-react'
@@ -252,20 +252,33 @@ export default function Patrol() {
           </div>
         )
       case 'negotiate':
+        const template = event.templateId
+          ? NEGOTIATION_EVENTS.find(e => e.id === event.templateId)
+          : null
+        const eventTitle = template?.title || '村民对话'
+        const eventIcon = template?.icon || '💬'
+        const villagerName = template?.villagerName || '村民'
+        const noTemplate = !event.templateId
         return (
           <div className="wood-card p-4 space-y-3 animate-fadeIn">
             <div className="flex items-center gap-2 text-purple-400 font-title">
-              <MessageSquare size={18} /> 村民对话
+              <MessageSquare size={18} /> {eventTitle}
             </div>
             <p className="text-sm text-gray-300">
-              遇到当地村民因放牧、采集等问题发生争执，可以尝试介入沟通协商
+              {template
+                ? `遇到${villagerName}，${template.description.slice(0, 30)}...`
+                : '遇到当地村民因放牧、采集等问题发生争执，可以尝试介入沟通协商'}
             </p>
             <div className="text-xs text-gray-500 bg-purple-900/20 p-2 rounded space-y-0.5">
               <p>• 不同立场影响声望变化和预算消耗</p>
               <p>• 协商完成后此事件自动结束</p>
             </div>
-            <button className="btn-wood text-sm" onClick={() => handleStartNegotiation(event)}>
-              开始对话
+            <button
+              className={`btn-wood text-sm ${noTemplate ? 'opacity-50' : ''}`}
+              onClick={() => handleStartNegotiation(event)}
+              disabled={noTemplate}
+            >
+              {noTemplate ? '所有纠纷均已处理' : '开始对话'}
             </button>
           </div>
         )

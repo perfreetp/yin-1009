@@ -73,16 +73,16 @@ export function determineEventType(terrain: string): string {
   const events: { item: string; weight: number }[] = []
   switch (terrain) {
     case 'forest':
-      events.push({ item: 'footprint', weight: 40 }, { item: 'trap', weight: 25 }, { item: 'camera', weight: 15 }, { item: 'rescue', weight: 20 })
+      events.push({ item: 'footprint', weight: 40 }, { item: 'trap', weight: 25 }, { item: 'camera_deploy', weight: 15 }, { item: 'rescue', weight: 20 })
       break
     case 'mountain':
-      events.push({ item: 'footprint', weight: 30 }, { item: 'trap', weight: 30 }, { item: 'camera', weight: 20 }, { item: 'rescue', weight: 20 })
+      events.push({ item: 'footprint', weight: 30 }, { item: 'trap', weight: 30 }, { item: 'camera_deploy', weight: 20 }, { item: 'rescue', weight: 20 })
       break
     case 'stream':
-      events.push({ item: 'footprint', weight: 45 }, { item: 'rescue', weight: 30 }, { item: 'camera', weight: 25 })
+      events.push({ item: 'footprint', weight: 45 }, { item: 'rescue', weight: 30 }, { item: 'camera_deploy', weight: 25 })
       break
     case 'meadow':
-      events.push({ item: 'footprint', weight: 45 }, { item: 'camera', weight: 30 }, { item: 'trap', weight: 25 })
+      events.push({ item: 'footprint', weight: 45 }, { item: 'camera_deploy', weight: 30 }, { item: 'trap', weight: 25 })
       break
     case 'village':
       events.push({ item: 'negotiate', weight: 70 }, { item: 'footprint', weight: 30 })

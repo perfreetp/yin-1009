@@ -85,6 +85,8 @@ export interface PatrolEvent {
   resolved: boolean
   outcome?: string
   day: number
+  templateId?: string
+  speciesId?: string
 }
 
 export interface SampleRecord {
@@ -155,11 +157,11 @@ export interface NegotiationEvent {
   id: string
   eventId?: string
   title: string
-  description: string
-  villagerName: string
-  conflictType: 'crop_damage' | 'livestock' | 'encroachment' | 'tradition'
-  stanceOptions: NegotiationStance[]
-  resolved: boolean
+  description?: string
+  villagerName?: string
+  conflictType?: 'crop_damage' | 'livestock' | 'encroachment' | 'tradition'
+  stanceOptions?: NegotiationStance[]
+  resolved?: boolean
   outcome?: string
   reputationChange?: number
   budgetCost?: number
